@@ -8,17 +8,17 @@ import streamlit as st
 """
 🏸 Badminton Rally Tracker — Web版 (Streamlit)
 
-■ これは元の Tkinter アプリを Web で誰でも使えるようにした移植版です。
+■ 元の Tkinter アプリを Web 対応にした移植版
   - ボタンをクリックしてラリーの着弾点を記録
   - コート画像に軌跡（矢印）と手順番号を描画
   - スコア自動計算（元コードのロジックを踏襲）
   - 統計（最終着弾の割合）とミスランキング表示
-  - PNG のダウンロード（自動保存はブラウザでは不可）
+  - PNG ダウンロード（ブラウザでは自動保存不可）
 
-■ デプロイは Streamlit Community Cloud / Hugging Face Spaces で可能です。
-  - requirements.txt に `streamlit` と `pillow` を指定してください。
+■ デプロイは Streamlit Community Cloud / Hugging Face Spaces で可能
+  - requirements.txt に streamlit と pillow を指定
 
-※ OS依存の pyautogui / pygetwindow / ImageGrab はクラウドでは動かないため削除しています。
+※ OS依存の pyautogui / pygetwindow / ImageGrab は削除済み
 """
 
 # -----------------------------
@@ -46,7 +46,6 @@ LINE_Y_MID = int(329 * SCALE)
 HOME_STR = "ホーム"
 VIS_STR = "ビジター"
 
-# Colors in PIL (RGB)
 GREEN = (0, 128, 0)
 WHITE = (255, 255, 255)
 RED = (220, 20, 60)
@@ -63,24 +62,23 @@ if "initialized" not in st.session_state:
     st.session_state.vis_score = 0
     st.session_state.path_data = []      # [(x, y, coat, button_text)]
     st.session_state.click_count = 0
-    st.session_state.all_paths = []      # list of rallies (list of path points)
-    st.session_state.final_positions = []  # list of button_text at rally end
+    st.session_state.all_paths = []
+    st.session_state.final_positions = []
     st.session_state.rally_count = 1
     st.session_state.game_scores = []
     st.session_state.home = HOME_STR
     st.session_state.visitor = VIS_STR
     st.session_state.home_color = RED
     st.session_state.vis_color = BLUE
-    st.session_state.rally_states = []   # undo for rally
-    st.session_state.game_states = []    # history snapshots
+    st.session_state.rally_states = []
+    st.session_state.game_states = []
 
-S = st.session_state  # alias
+S = st.session_state
 
 # -----------------------------
 # Utility: Grid geometry & labels
 # -----------------------------
 def grid_xy(col_idx: int, row_idx: int, coat: str):
-    """Return pixel center (x, y) for given grid cell (1-based) and coat."""
     j = col_idx - 1
     i = row_idx - 1
     x = (MARGIN_X * SCALE) + j * (76 * SCALE) + BTN_W/2
@@ -93,13 +91,12 @@ VIS_OUTS  = {(1,1),(1,5),(2,1),(2,5),(3,1),(3,5),(4,1),(4,2),(4,3),(4,4),(4,5)}
 
 def button_text(coat: str, i: int, j: int):
     if coat == S.home:
-        label = f"out{coat}\n({i},{j})" if (i, j) in HOME_OUTS else f"{coat}\n({i},{j})"
+        return f"out{coat}\n({i},{j})" if (i, j) in HOME_OUTS else f"{coat}\n({i},{j})"
     else:
-        label = f"out{coat}\n({i},{j})" if (i, j) in VIS_OUTS else f"{coat}\n({i},{j})"
-    return label
+        return f"out{coat}\n({i},{j})" if (i, j) in VIS_OUTS else f"{coat}\n({i},{j})"
 
 # -----------------------------
-# Scoring Logic (from original)
+# Scoring Logic
 # -----------------------------
 SCORING_BTNS_HOME = {
     f"out{HOME_STR}\n(1,1)", f"out{HOME_STR}\n(1,2)", f"out{HOME_STR}\n(1,3)", f"out{HOME_STR}\n(1,4)", f"out{HOME_STR}\n(1,5)",
@@ -110,7 +107,6 @@ SCORING_BTNS_HOME = {
 
 def update_score(last_button_name: str):
     if S.game_number % 2 == 0:
-        # even game: reversed
         if last_button_name in SCORING_BTNS_HOME:
             S.vis_score += 1
         else:
@@ -122,14 +118,14 @@ def update_score(last_button_name: str):
             S.vis_score += 1
 
 # -----------------------------
-# Rendering: court & paths (PIL)
+# Rendering: court & paths
 # -----------------------------
 try:
     FONT_SMALL = ImageFont.truetype("DejaVuSans.ttf", 14)
 except Exception:
     FONT_SMALL = ImageFont.load_default()
 
-def draw_arrow(draw: ImageDraw.ImageDraw, x1, y1, x2, y2, color, width=2):
+def draw_arrow(draw, x1, y1, x2, y2, color, width=2):
     draw.line((x1, y1, x2, y2), fill=color, width=width)
     ang = math.atan2(y2 - y1, x2 - x1)
     L = 8
@@ -142,27 +138,19 @@ def draw_arrow(draw: ImageDraw.ImageDraw, x1, y1, x2, y2, color, width=2):
 def render_court(paths=None, show_step_numbers=True):
     img = Image.new("RGB", (CANVAS_W, CANVAS_H), GREEN)
     d = ImageDraw.Draw(img)
-
-    # mid line
     d.line((0, LINE_Y_MID, CANVAS_W, LINE_Y_MID), fill=WHITE, width=2)
-
-    # inner rect
     x1 = int((11 + 1 * 76) * SCALE)
     y1 = int((11 + 1 * 76) * SCALE)
     x2 = int((11 + 4 * 76) * SCALE)
     y2 = int((346 + 3 * 76) * SCALE)
     d.rectangle((x1, y1, x2, y2), outline=WHITE, width=2)
-
-    # path points from current rally
     if paths:
         for idx in range(len(paths)):
             x, y, coat, btn_text = paths[idx]
-            # first point
             if idx == 0:
                 d.ellipse((x-5, y-5, x+5, y+5), fill=YELLOW)
             if idx > 0:
                 px, py, coat_prev, _ = paths[idx-1]
-                # colors depending on coat change
                 if coat_prev == S.home and coat == S.visitor:
                     color = S.home_color
                 elif coat_prev == S.visitor and coat == S.home:
@@ -170,7 +158,6 @@ def render_court(paths=None, show_step_numbers=True):
                 else:
                     color = S.home_color if coat == S.home else S.vis_color
                 draw_arrow(d, px, py, x, y, color)
-                # step numbers
                 if show_step_numbers:
                     mx = (px + x) / 2
                     my = (py + y) / 2
@@ -179,7 +166,7 @@ def render_court(paths=None, show_step_numbers=True):
     return img
 
 # -----------------------------
-# Actions (state mutations)
+# Actions
 # -----------------------------
 def click_cell(coat: str, i: int, j: int):
     x, y = grid_xy(j, i, coat)
@@ -195,7 +182,6 @@ def end_rally():
     S.path_data = []
     S.click_count = 0
     S.rally_count += 1
-    # snapshot for undo
     S.game_states.append((S.home_score, S.vis_score, S.rally_count, list(S.path_data),
                           S.click_count, list(S.all_paths), list(S.final_positions)))
     S.rally_states.append((S.home_score, S.vis_score, S.rally_count, list(S.path_data),
@@ -216,9 +202,7 @@ def reset_current_rally():
     S.click_count = 0
 
 def switch_game():
-    # record previous game's final score
     S.game_scores.append((S.game_number, S.home_score, S.vis_score))
-    # reset
     S.final_positions = []
     S.home_score = 0
     S.vis_score = 0
@@ -226,45 +210,34 @@ def switch_game():
     S.path_data = []
     S.click_count = 0
     S.all_paths = []
-    # next game
     S.game_number += 1
-    # color swap by parity (original behavior)
     if S.game_number % 2 == 0:
         S.home_color, S.vis_color = BLUE, RED
     else:
         S.home_color, S.vis_color = RED, BLUE
-    # swap side labels
     S.home, S.visitor = S.visitor, S.home
 
 # -----------------------------
-# Stats & Ranking images
+# Stats image
 # -----------------------------
 def render_stats_image():
-    # gather counts for home/visitor areas separately
     home_counter = Counter([p for p in S.final_positions if S.home in p])
     vis_counter  = Counter([p for p in S.final_positions if S.visitor in p])
     total_home = sum(home_counter.values())
     total_vis = sum(vis_counter.values())
-
     img = Image.new("RGB", (CANVAS_W, CANVAS_H), GREEN)
     d = ImageDraw.Draw(img)
-    # court
     d.line((0, LINE_Y_MID, CANVAS_W, LINE_Y_MID), fill=WHITE, width=2)
     x1 = int((11 + 1 * 76) * SCALE)
     y1 = int((11 + 1 * 76) * SCALE)
     x2 = int((11 + 4 * 76) * SCALE)
     y2 = int((346 + 3 * 76) * SCALE)
     d.rectangle((x1, y1, x2, y2), outline=WHITE, width=2)
-
-    def center_of(coat: str, i: int, j: int):
-        return grid_xy(j, i, coat)
-
-    # draw percentages
     for i in range(1, GRID_ROWS + 1):
         for j in range(1, GRID_COLS + 1):
             for coat in (S.home, S.visitor):
                 label = button_text(coat, i, j)
-                cx, cy = center_of(coat, i, j)
+                cx, cy = grid_xy(j, i, coat)
                 if coat == S.home:
                     cnt = home_counter.get(label, 0)
                     pct = (cnt / total_home * 100) if total_home else 0
@@ -277,27 +250,19 @@ def render_stats_image():
     return img
 
 # -----------------------------
-# UI Layout
+# UI
 # -----------------------------
 left, right = st.columns([1.2, 1])
 
 with left:
     st.subheader("記録パネル")
-    # Score header
-    st.markdown(f"**ゲーム {S.game_number}**  —  スコア：**{S.home} {S.home_score} - {S.visitor} {S.vis_score}**")
-
-    # Current court render
+    st.markdown(f"**ゲーム {S.game_number}** — スコア：**{S.home} {S.home_score} - {S.visitor} {S.vis_score}**")
     court_img = render_court(S.path_data, show_step_numbers=True)
     buf = io.BytesIO()
     court_img.save(buf, format="PNG")
     png_bytes = buf.getvalue()
     st.image(png_bytes, caption="現在のラリー軌跡", use_column_width=False)
-    st.download_button(
-        "この画像をPNGでダウンロード",
-        data=png_bytes,
-        file_name=f"game{S.game_number}_rally{S.rally_count}_preview.png",
-        mime="image/png"
-    )
+    st.download_button("この画像をPNGでダウンロード", data=png_bytes, file_name=f"game{S.game_number}_rally{S.rally_count}_preview.png", mime="image/png")
 
     st.divider()
     st.markdown(f"### {S.home} のコート")
@@ -321,10 +286,6 @@ with right:
     c1, c2 = st.columns(2)
     if c1.button("ラリー終了", use_container_width=True):
         end_rally()
-        try:
-            st.toast("ラリーを確定しました。スコアと履歴に反映。")
-        except Exception:
-            pass
     if c2.button("現在の入力を取り消す", use_container_width=True):
         undo_last_path()
 
@@ -336,12 +297,7 @@ with right:
 
     st.divider()
     if st.button("ゲーム切り替え", use_container_width=True):
-        prev = (S.game_number, S.home_score, S.vis_score)
         switch_game()
-        try:
-            st.toast(f"ゲーム {prev[0]} の結果: {S.home} {prev[1]} - {S.visitor} {prev[2]}。サイド・色を切り替えました。")
-        except Exception:
-            pass
 
     st.divider()
     st.markdown("### 統計 & ランキング")
@@ -350,31 +306,26 @@ with right:
     stats_img.save(sbuf, format="PNG")
     stats_png = sbuf.getvalue()
     st.image(stats_png, caption="最終着弾の割合（ホーム/ビジター別）")
-    st.download_button(
-        "統計画像をPNGでダウンロード",
-        data=stats_png,
-        file_name=f"game{S.game_number}_stats.png",
-        mime="image/png"
-    )
+    st.download_button("統計画像をPNGでダウンロード", data=stats_png, file_name=f"game{S.game_number}_stats.png", mime="image/png")
 
-    # Mistake ranking (most common final positions)
     if S.final_positions:
         cnt = Counter(S.final_positions)
         ranked = sorted(cnt.items(), key=lambda x: x[1], reverse=True)
         st.markdown("#### ミスランキング（最終着弾の多い順）")
         for rank, (pos, c) in enumerate(ranked, start=1):
-            st.write(f"{rank}. {pos.replace('\\n',' ')} — {c} 回")
+            pos_clean = pos.replace("\n", " ")
+            st.write(f"{rank}. {pos_clean} — {c} 回")
     else:
-        st.info("まだ最終着弾データがありません。ラリーをいくつか確定すると表示されます。")
+        st.info("まだ最終着弾データがありません。")
 
 st.divider()
 st.markdown(
     """
 **使い方メモ**  
-1) コート上のボタンをクリックすると、そのマスの中心に点が打たれ、以降は矢印で軌跡が描かれます。  
-2) ラリー終了 → 最後に押したボタンを最終着弾としてスコア計算し、ラリー履歴に追加します。  
-3) 統計は「最終着弾」だけを集計してホーム/ビジターそれぞれのエリア割合を表示します。  
-4) PNG保存は各画像下の「ダウンロード」ボタンから行ってください（自動保存はブラウザ仕様上不可）。  
-5) ゲーム切替でスコアをリセットし、サイド名の入替とライン色（赤/青）を自動で入れ替えます。  
+1) コート上のボタンをクリックすると、そのマスの中心に点が打たれます。  
+2) ラリー終了 → 最後のボタンを最終着弾としてスコアに反映。  
+3) 統計は最終着弾のみを集計して割合表示。  
+4) PNG保存は画像下の「ダウンロード」ボタンで可能。  
+5) ゲーム切替でスコア・サイド・線色を切替。  
 """
 )
