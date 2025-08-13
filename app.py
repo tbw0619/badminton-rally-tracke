@@ -5,6 +5,13 @@ from collections import Counter
 from PIL import Image, ImageDraw, ImageFont
 import streamlit as st
 
+# ---- ここをガード（失敗しても続行） ----
+try:
+    st.set_page_config(page_title="Badminton Rally Tracker", page_icon="🏸", layout="wide")
+except Exception:
+    pass
+# --------------------------------------
+
 """
 🏸 Badminton Rally Tracker — Web版 (Streamlit)
 
@@ -14,17 +21,11 @@ import streamlit as st
   - スコア自動計算（元コードのロジックを踏襲）
   - 統計（最終着弾の割合）とミスランキング表示
   - PNG ダウンロード（ブラウザでは自動保存不可）
-
-■ デプロイは Streamlit Community Cloud / Hugging Face Spaces で可能
-  - requirements.txt に streamlit と pillow を指定
-
-※ OS依存の pyautogui / pygetwindow / ImageGrab は削除済み
 """
 
 # -----------------------------
-# App Config
+# App head
 # -----------------------------
-st.set_page_config(page_title="Badminton Rally Tracker", page_icon="🏸", layout="wide")
 st.title("🏸 Badminton Rally Tracker — Web版 (Streamlit)")
 st.caption("Tkinter版をWeb対応に移植。クリックでラリーを記録し、スコア・軌跡・統計を保存できます。")
 
@@ -161,7 +162,7 @@ def render_court(paths=None, show_step_numbers=True):
                 if show_step_numbers:
                     mx = (px + x) / 2
                     my = (py + y) / 2
-                    offset = -10 if coat == HOME_STR else 10
+                    offset = -10 if coat == "ホーム" else 10
                     d.text((mx, my + offset), str(idx+1), fill=WHITE, font=FONT_SMALL, anchor="mm")
     return img
 
