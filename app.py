@@ -40,7 +40,14 @@ GRID_ROWS = 4
 GRID_COLS = 5
 BASE_W = 440
 BASE_H = 748
-MID_Y  = int(BASE_H * (329/(680*1.1)))  # 元Tkinterの比率に合わせたセンター
+
+# もともとのセンター（元Tkinter比率）
+_BASE_MID_Y  = int(BASE_H * (329/(680*1.1)))
+
+# ▼中央線を少し下げる量（セル高さの割合）例: 0.12=12%
+MID_SHIFT_RATIO = 0.12
+_CELL_H = (BASE_H/2) / GRID_ROWS
+MID_Y = _BASE_MID_Y + int(_CELL_H * MID_SHIFT_RATIO)
 
 HOME_STR = "ホーム"
 VIS_STR  = "ビジター"
