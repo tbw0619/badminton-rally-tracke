@@ -1,285 +1,244 @@
-# app.py
 import io
-import math
 from collections import Counter
+import math
 
 from PIL import Image, ImageDraw, ImageFont
 import streamlit as st
 
-# -----------------------------
-# ページ設定（環境で例外化しても続行）
-# -----------------------------
+# ===== Page config（失敗時も続行） =====
 try:
     st.set_page_config(page_title="Badminton Rally Tracker", page_icon="🏸", layout="wide")
 except Exception:
     pass
 
-# 余白圧縮＆ボタン極小化（スクロール抑制）
-st.markdown(
-    """
-    <style>
-    .block-container{padding-top:0.3rem;padding-bottom:0.3rem;max-width:1500px}
-    [data-testid="stHeader"]{height:2rem}
-    /* ボタン小型化 */
-    div.stButton>button{padding:2px 4px;font-size:11px;line-height:1.1;height:24px;min-height:24px}
-    /* カラム間余白を詰める */
-    [data-testid="column"]{padding-top:0rem;padding-bottom:0rem}
-    </style>
-    """,
-    unsafe_allow_html=True,
-)
+# ===== 余白圧縮 & 小型ボタン =====
+st.markdown("""
+<style>
+.block-container{padding-top:0.35rem;padding-bottom:0.35rem;max-width:1500px}
+[data-testid="stHeader"]{height:2rem}
+div.stButton>button{padding:2px 4px;font-size:11px;line-height:1.1;height:24px;min-height:24px}
+[data-testid="column"]{padding-top:0rem;padding-bottom:0rem}
+h3, h4 { margin-top:0.4rem; margin-bottom:0.4rem; }
+</style>
+""", unsafe_allow_html=True)
 
-# -----------------------------
-# 基本定数（描画はベース座標で固定、表示時に縮小）
-# -----------------------------
-GRID_ROWS = 4
+st.title("🏸 Badminton Rally Tracker — Web版")
+
+# ===== 定数（ベース座標・色） =====
+GRID_ROWS = 5
 GRID_COLS = 5
-BTN_W = 75
-BTN_H = 70
-MARGIN_X = 15
-MARGIN_Y_HOME = 15
-MARGIN_Y_VIS = 350
-SCALE = 1.1
-BASE_W = int(400 * SCALE)    # 画像生成の基準幅
-BASE_H = int(680 * SCALE)    # 画像生成の基準高
-LINE_Y_MID = int(329 * SCALE)
-IMAGE_H = 420                # 表示時のコート画像の高さ（px）←端末に合わせて必要ならここだけ調整
+BASE_W = 390
+BASE_H = 740
+MID_Y  = BASE_H // 2
 
 HOME_STR = "ホーム"
-VIS_STR = "ビジター"
+VIS_STR  = "ビジター"
 
-# Colors
-GREEN = (0, 128, 0)
-WHITE = (255, 255, 255)
-RED   = (220, 20, 60)
-BLUE  = (30, 144, 255)
-YELLOW= (255, 215, 0)
+GREEN        = (0,128,0)
+GREEN_HOME   = (34,139,34)   # 背景（ホーム半面）
+GREEN_VIS    = (30,110,30)   # 背景（ビジター半面）
+WHITE        = (255,255,255)
+RED          = (220,20,60)
+BLUE         = (30,144,255)
+YELLOW       = (255,215,0)
 
-# -----------------------------
-# セッション初期化
-# -----------------------------
-if "init" not in st.session_state:
-    S = st.session_state
-    S.init = True
-    S.game_number = 1
-    S.home_score = 0
-    S.vis_score = 0
-    S.path_data = []          # [(x,y,coat,logic_label)]
-    S.click_count = 0
-    S.all_paths = []
-    S.final_positions = []    # logic_label の配列
-    S.rally_count = 1
-    S.game_scores = []
-    S.home = HOME_STR
-    S.visitor = VIS_STR
-    S.home_color = RED
-    S.vis_color = BLUE
-    S.rally_states = []
-    S.game_states = []
+try:
+    FONT = ImageFont.truetype("DejaVuSans.ttf", 14)
+except Exception:
+    FONT = ImageFont.load_default()
+
+# ===== セッション =====
 S = st.session_state
+if "rallies" not in S: S.rallies = []      # 各ラリー: [(x,y),...]
+if "current" not in S: S.current = []      # 入力中ラリー
+if "scores"  not in S: S.scores  = {"home":0, "visitor":0}
 
-# -----------------------------
-# グリッド関連
-# -----------------------------
-HOME_OUTS = {(1,1),(1,2),(1,3),(1,4),(1,5),(2,1),(3,1),(4,1),(2,5),(3,5),(4,5)}
-VIS_OUTS  = {(1,1),(1,5),(2,1),(2,5),(3,1),(3,5),(4,1),(4,2),(4,3),(4,4),(4,5)}
+# ===== ユーティリティ =====
+def cell_size():
+    cell_w = BASE_W / GRID_COLS
+    cell_h = (BASE_H/2) / GRID_ROWS
+    return cell_w, cell_h
 
-def logic_label(coat: str, i: int, j: int) -> str:
-    """スコア計算・統計用の内部ラベル（改行入り）。"""
-    if coat == S.home:
-        return f"out{coat}\n({i},{j})" if (i, j) in HOME_OUTS else f"{coat}\n({i},{j})"
-    else:
-        return f"out{coat}\n({i},{j})" if (i, j) in VIS_OUTS else f"{coat}\n({i},{j})"
-
-def display_label(coat: str, i: int, j: int) -> str:
-    """表示用の短いラベル（高さを抑える）。"""
-    side = "H" if coat == S.home else "V"
-    prefix = "o" if ((coat == S.home and (i,j) in HOME_OUTS) or (coat == S.visitor and (i,j) in VIS_OUTS)) else ""
-    return f"{prefix}{side}{i},{j}"
-
-def center_xy(col_idx: int, row_idx: int, coat: str) -> tuple[int,int]:
-    """セル中心座標（ベース画像座標）"""
-    j = col_idx - 1
-    i = row_idx - 1
-    x = int((MARGIN_X * SCALE) + j * (76 * SCALE) + BTN_W/2)
-    y0 = int((MARGIN_Y_HOME if coat == S.home else MARGIN_Y_VIS) * SCALE)
-    y = int(y0 + i * (76 * SCALE) + BTN_H/2)
+def cell_center(col: int, row: int, top_half: bool) -> tuple[int,int]:
+    cw, ch = cell_size()
+    x = int((col-0.5) * cw)
+    y = int((row-0.5) * ch) if top_half else int(MID_Y + (row-0.5) * ch)
     return x, y
 
-# -----------------------------
-# スコアロジック（元ロジック踏襲）
-# -----------------------------
-SCORING_BTNS_HOME = {
-    f"out{HOME_STR}\n(1,1)", f"out{HOME_STR}\n(1,2)", f"out{HOME_STR}\n(1,3)", f"out{HOME_STR}\n(1,4)", f"out{HOME_STR}\n(1,5)",
-    f"out{HOME_STR}\n(2,1)", f"out{HOME_STR}\n(3,1)", f"out{HOME_STR}\n(4,1)", f"out{HOME_STR}\n(2,5)", f"out{HOME_STR}\n(3,5)", f"out{HOME_STR}\n(4,5)",
-    f"{VIS_STR}\n(1,2)", f"{VIS_STR}\n(1,3)", f"{VIS_STR}\n(1,4)", f"{VIS_STR}\n(2,2)", f"{VIS_STR}\n(2,3)", f"{VIS_STR}\n(2,4)",
-    f"{VIS_STR}\n(3,2)", f"{VIS_STR}\n(3,3)", f"{VIS_STR}\n(3,4)", f"{VIS_STR}\n(4,2)", f"{VIS_STR}\n(4,3)", f"{VIS_STR}\n(4,4)"
-}
-def update_score(last_label: str):
-    if S.game_number % 2 == 0:
-        if last_label in SCORING_BTNS_HOME: S.vis_score += 1
-        else:                               S.home_score += 1
+def nearest_cell(x: int, y: int) -> tuple[str,int,int]:
+    top_half = y < MID_Y
+    coat = HOME_STR if top_half else VIS_STR
+    cw, ch = cell_size()
+    c = max(1, min(GRID_COLS, int(x // cw + 1)))
+    r = max(1, min(GRID_ROWS, int((y if top_half else (y - MID_Y)) // ch + 1)))
+    return coat, r, c
+
+# ===== コート描画（Pillow） =====
+def draw_half_court_grid(img: Image.Image, top_half: bool, face_color, with_inner_rect=True):
+    """半面に外枠＋5×5グリッド線を引く（ボタン面背景用）。"""
+    d = ImageDraw.Draw(img)
+    # 塗りつぶし
+    if top_half:
+        d.rectangle((0,0,BASE_W-1, MID_Y-1), fill=face_color, outline=face_color)
     else:
-        if last_label in SCORING_BTNS_HOME: S.home_score += 1
-        else:                               S.vis_score += 1
+        d.rectangle((0,MID_Y,BASE_W-1,BASE_H-1), fill=face_color, outline=face_color)
 
-# -----------------------------
-# 描画（PIL）
-# -----------------------------
-try:
-    FONT_SMALL = ImageFont.truetype("DejaVuSans.ttf", 14)
-except Exception:
-    FONT_SMALL = ImageFont.load_default()
+    # 外枠
+    y0, y1 = (0, MID_Y-1) if top_half else (MID_Y, BASE_H-1)
+    d.rectangle((0, y0, BASE_W-1, y1), outline=WHITE, width=2)
 
-def draw_arrow(d: ImageDraw.ImageDraw, x1,y1,x2,y2, color, width=2):
-    d.line((x1,y1,x2,y2), fill=color, width=width)
-    ang = math.atan2(y2 - y1, x2 - x1)
-    L = 8
-    a1 = ang + math.radians(160); a2 = ang - math.radians(160)
-    p1 = (x2 + L*math.cos(a1), y2 + L*math.sin(a1))
-    p2 = (x2 + L*math.cos(a2), y2 + L*math.sin(a2))
-    d.polygon([p1, (x2, y2), p2], fill=color)
+    # 5×5 グリッド
+    cw, ch = cell_size()
+    # 縦線（列の境目 1..4）
+    for k in range(1, GRID_COLS):
+        x = int(k * cw)
+        d.line((x, y0, x, y1), fill=WHITE, width=1)
+    # 横線（行の境目 1..4）
+    for k in range(1, GRID_ROWS):
+        y = int(y0 + k * ch)
+        d.line((0, y, BASE_W, y), fill=WHITE, width=1)
 
-def render_court(paths=None, show_steps=True) -> Image.Image:
+    # 任意：内側サービス矩形（視認性のため軽く）
+    if with_inner_rect:
+        margin_x = int(BASE_W*0.12)
+        margin_y = int((BASE_H/2)*0.12)
+        d.rectangle((margin_x, y0+margin_y, BASE_W-margin_x, y1-margin_y), outline=WHITE, width=2)
+
+def render_traj(paths=None, show_steps=True) -> Image.Image:
     img = Image.new("RGB", (BASE_W, BASE_H), GREEN)
     d = ImageDraw.Draw(img)
-    # mid line & inner rect
-    d.line((0, LINE_Y_MID, BASE_W, LINE_Y_MID), fill=WHITE, width=2)
-    x1 = int((11 + 1 * 76) * SCALE); y1 = int((11 + 1 * 76) * SCALE)
-    x2 = int((11 + 4 * 76) * SCALE); y2 = int((346 + 3 * 76) * SCALE)
-    d.rectangle((x1, y1, x2, y2), outline=WHITE, width=2)
-    # path
+    # 背景：上下半面を塗って線を描く
+    draw_half_court_grid(img, True,  GREEN)
+    draw_half_court_grid(img, False, GREEN)
+    # センターライン
+    d.line((0, MID_Y, BASE_W, MID_Y), fill=WHITE, width=2)
+
     if paths:
-        for idx in range(len(paths)):
-            x,y,coat,label = paths[idx]
-            if idx == 0: d.ellipse((x-5, y-5, x+5, y+5), fill=YELLOW)
-            if idx > 0:
-                px,py,pcoat,_ = paths[idx-1]
-                if pcoat == S.home and coat == S.visitor:   color = S.home_color
-                elif pcoat == S.visitor and coat == S.home: color = S.vis_color
-                else:                                       color = S.home_color if coat == S.home else S.vis_color
-                draw_arrow(d, px,py,x,y,color)
+        for i, (x,y) in enumerate(paths):
+            d.ellipse((x-5,y-5,x+5,y+5), fill=YELLOW)
+            if i>0:
+                x0,y0 = paths[i-1]
+                prev_top = (y0 < MID_Y)
+                now_top  = (y  < MID_Y)
+                color = BLUE if now_top else RED
+                if prev_top != now_top:
+                    color = RED if now_top else BLUE
+                d.line((x0,y0,x,y), fill=color, width=2)
+                ang = math.atan2(y-y0, x-x0)
+                L = 8
+                p1 = (x + L*math.cos(ang+2.6), y + L*math.sin(ang+2.6))
+                p2 = (x + L*math.cos(ang-2.6), y + L*math.sin(ang-2.6))
+                d.polygon([p1,(x,y),p2], fill=color)
                 if show_steps:
-                    mx,my = (px+x)/2, (py+y)/2
-                    offset = -10 if coat == "ホーム" else 10
-                    d.text((mx, my+offset), str(idx+1), fill=WHITE, font=FONT_SMALL, anchor="mm")
+                    mx,my = (x0+x)/2, (y0+y)/2
+                    d.text((mx, my-10 if now_top else my+10), str(i+1), fill=WHITE, font=FONT, anchor="mm")
     return img
 
-def render_stats_image() -> Image.Image:
-    home_counter = Counter([p for p in S.final_positions if S.home in p])
-    vis_counter  = Counter([p for p in S.final_positions if S.visitor in p])
-    total_home, total_vis = sum(home_counter.values()), sum(vis_counter.values())
+def render_stats_from_rallies(rallies) -> Image.Image:
+    counter = Counter()
+    total_home = total_vis = 0
+    for rally in rallies:
+        if not rally: continue
+        x,y = rally[-1]
+        coat, r, c = nearest_cell(x,y)
+        counter[(coat,r,c)] += 1
+        if coat == HOME_STR: total_home += 1
+        else: total_vis += 1
+
     img = Image.new("RGB", (BASE_W, BASE_H), GREEN)
+    draw_half_court_grid(img, True,  GREEN)   # 上半面
+    draw_half_court_grid(img, False, GREEN)   # 下半面
     d = ImageDraw.Draw(img)
-    d.line((0, LINE_Y_MID, BASE_W, LINE_Y_MID), fill=WHITE, width=2)
-    x1 = int((11 + 1 * 76) * SCALE); y1 = int((11 + 1 * 76) * SCALE)
-    x2 = int((11 + 4 * 76) * SCALE); y2 = int((346 + 3 * 76) * SCALE)
-    d.rectangle((x1, y1, x2, y2), outline=WHITE, width=2)
-    for i in range(1, GRID_ROWS+1):
-        for j in range(1, GRID_COLS+1):
-            for coat in (S.home, S.visitor):
-                label = logic_label(coat, i, j)
-                cx, cy = center_xy(j, i, coat)
-                if coat == S.home:
-                    cnt = home_counter.get(label, 0); pct = (cnt/total_home*100) if total_home else 0
-                    color = RED if S.home == "ホーム" else BLUE
-                else:
-                    cnt = vis_counter.get(label, 0);  pct = (cnt/total_vis*100) if total_vis else 0
-                    color = BLUE if S.visitor == "ホーム" else RED
-                d.text((cx, cy), f"{pct:.1f}%", fill=color, font=FONT_SMALL, anchor="mm")
+    # ％をセル中心に描画
+    for r in range(1, GRID_ROWS+1):
+        for c in range(1, GRID_COLS+1):
+            cnt = counter.get((HOME_STR, r, c), 0)
+            pct = (cnt/total_home*100) if total_home else 0
+            x,y = cell_center(c, r, top_half=True)
+            d.text((x,y), f"{pct:.1f}%", fill=RED, font=FONT, anchor="mm")
+            cnt = counter.get((VIS_STR, r, c), 0)
+            pct = (cnt/total_vis*100) if total_vis else 0
+            x,y = cell_center(c, r, top_half=False)
+            d.text((x,y), f"{pct:.1f}%", fill=BLUE, font=FONT, anchor="mm")
     return img
 
-# -----------------------------
-# 操作系
-# -----------------------------
-def add_point(coat: str, i: int, j: int):
-    x,y = center_xy(j, i, coat)      # ベース座標
-    S.click_count += 1
-    S.path_data.append((x, y, coat, logic_label(coat, i, j)))
+def render_half_background(face_color) -> Image.Image:
+    """ボタン面の背景（半面のみ、5×5グリッド付き）"""
+    img = Image.new("RGB", (BASE_W, BASE_H), face_color)
+    draw_half_court_grid(img, True, face_color)   # 上半面のみ使う
+    return img.crop((0,0,BASE_W,MID_Y))
+
+# ===== 状態更新 =====
+def add_point_by_cell(is_home: bool, row: int, col: int):
+    x,y = cell_center(col, row, top_half=is_home)
+    S.current.append((x,y))
 
 def end_rally():
-    if S.path_data:
-        last_lbl = S.path_data[-1][3]
-        S.final_positions.append(last_lbl)
-        update_score(last_lbl)
-        S.all_paths.append(list(S.path_data))
-    S.path_data = []; S.click_count = 0; S.rally_count += 1
-    S.game_states.append((S.home_score, S.vis_score, S.rally_count, list(S.path_data),
-                          S.click_count, list(S.all_paths), list(S.final_positions)))
-    S.rally_states.append((S.home_score, S.vis_score, S.rally_count, list(S.path_data),
-                           S.click_count, list(S.all_paths), list(S.final_positions)))
+    if S.current:
+        S.rallies.append(S.current[:])
+        S.current = []
+        S.scores["home"] += 1  # 必要に応じてスコアロジック差し替え
 
-def undo_last_path():
-    if S.path_data:
-        S.path_data.pop(); S.click_count = max(0, S.click_count - 1)
+def undo_one():
+    if S.current: S.current.pop()
 
 def undo_last_rally():
-    if S.rally_states:
-        (S.home_score, S.vis_score, S.rally_count, S.path_data,
-         S.click_count, S.all_paths, S.final_positions) = S.rally_states.pop()
+    if S.rallies:
+        S.current = S.rallies.pop()
 
-def reset_current_rally():
-    S.path_data = []; S.click_count = 0
+def reset_all():
+    S.current = []
+    S.rallies = []
+    S.scores = {"home":0, "visitor":0}
 
-def switch_game():
-    S.game_scores.append((S.game_number, S.home_score, S.vis_score))
-    S.final_positions = []; S.home_score = 0; S.vis_score = 0
-    S.rally_count = 1; S.path_data = []; S.click_count = 0; S.all_paths = []
-    S.game_number += 1
-    S.home_color, S.vis_color = (BLUE, RED) if S.game_number % 2 == 0 else (RED, BLUE)
-    S.home, S.visitor = S.visitor, S.home
+# ===== レイアウト：3カラム（右の入力→左/中央描画） =====
+col1, col2, col3 = st.columns([1,1,1], gap="small")
 
-# -----------------------------
-# レイアウト（横一列：軌跡／統計／ボタン）
-# -----------------------------
-st.markdown(f"**ゲーム {S.game_number}** — スコア：**{S.home} {S.home_score} - {S.visitor} {S.vis_score}**")
-
-col1, col2, col3 = st.columns(3, gap="small")
-
-# ① 軌跡コート
-with col1:
-    st.subheader("軌跡", divider="gray")
-    img = render_court(S.path_data, True)
-    disp_w = int(BASE_W * (IMAGE_H/BASE_H))
-    img_resized = img.resize((disp_w, IMAGE_H), Image.NEAREST)
-    st.image(img_resized, use_column_width=False)
-
-# ② 統計コート
-with col2:
-    st.subheader("統計", divider="gray")
-    stats = render_stats_image()
-    stats_resized = stats.resize((disp_w, IMAGE_H), Image.NEAREST)
-    st.image(stats_resized, use_column_width=False)
-
-# ③ ボタンコート（ホーム→ビジターの順で超小型ボタン）
 with col3:
     st.subheader("ボタン", divider="gray")
 
-    st.markdown(f"**{S.home}**")
-    for i in range(1, GRID_ROWS + 1):
-        row_cols = st.columns(GRID_COLS, gap="small")
-        for j in range(1, GRID_COLS + 1):
-            lbl = display_label(S.home, i, j)
-            if row_cols[j-1].button(lbl, key=f"h-{S.game_number}-{S.rally_count}-{i}-{j}"):
-                add_point(S.home, i, j)
+    # --- ホーム面：背景に半面コート（5×5白グリッド） ---
+    bg_home = render_half_background(GREEN_HOME).resize((int(BASE_W*0.9), int(MID_Y*0.9)))
+    st.image(bg_home, use_column_width=False)
+    st.markdown("**ホーム**")
+    for r in range(1, GRID_ROWS+1):
+        cols = st.columns(GRID_COLS, gap="small")
+        for c in range(1, GRID_COLS+1):
+            # 画像のような「oH1,1」表記（境界セルを 'o' プレフィックス）に近づける例
+            is_outer = (r in {1,GRID_ROWS}) or (c in {1,GRID_COLS})
+            lbl = f"{'o' if is_outer else ''}H{r},{c}"
+            if cols[c-1].button(lbl, key=f"H-{r}-{c}"):
+                add_point_by_cell(True, r, c)
 
-    st.markdown(f"**{S.visitor}**")
-    for i in range(1, GRID_ROWS + 1):
-        row_cols = st.columns(GRID_COLS, gap="small")
-        for j in range(1, GRID_COLS + 1):
-            lbl = display_label(S.visitor, i, j)
-            if row_cols[j-1].button(lbl, key=f"v-{S.game_number}-{S.rally_count}-{i}-{j}"):
-                add_point(S.visitor, i, j)
+    # --- ビジター面 ---
+    bg_vis = render_half_background(GREEN_VIS).resize((int(BASE_W*0.9), int(MID_Y*0.9)))
+    st.image(bg_vis, use_column_width=False)
+    st.markdown("**ビジター**")
+    for r in range(1, GRID_ROWS+1):
+        cols = st.columns(GRID_COLS, gap="small")
+        for c in range(1, GRID_COLS+1):
+            is_outer = (r in {1,GRID_ROWS}) or (c in {1,GRID_COLS})
+            lbl = f"{'o' if is_outer else ''}V{r},{c}"
+            if cols[c-1].button(lbl, key=f"V-{r}-{c}"):
+                add_point_by_cell(False, r, c)
 
     st.divider()
     c1, c2 = st.columns(2, gap="small")
-    if c1.button("ラリー終了", use_container_width=True): end_rally()
-    if c2.button("元に戻す", use_container_width=True):   undo_last_path()
+    if c1.button("ラリー終了", use_container_width=True):  end_rally()
+    if c2.button("元に戻す", use_container_width=True):    undo_one()
 
     c3, c4 = st.columns(2, gap="small")
     if c3.button("一つ前のラリー", use_container_width=True): undo_last_rally()
-    if c4.button("ラリー全消去", use_container_width=True):    reset_current_rally()
+    if c4.button("ラリー全消去", use_container_width=True):    reset_all()
 
-    if st.button("ゲーム切り替え", use_container_width=True): switch_game()
+with col1:
+    st.subheader("軌跡", divider="gray")
+    traj_img = render_traj(S.current, show_steps=True)
+    st.image(traj_img.resize((int(BASE_W*0.9), int(BASE_H*0.9))), use_column_width=False)
 
-# 末尾の説明は省略（スクロール抑制のため）
+with col2:
+    st.subheader("統計", divider="gray")
+    stats_img = render_stats_from_rallies(S.rallies)
+    st.image(stats_img.resize((int(BASE_W*0.9), int(BASE_H*0.9))), use_column_width=False)
+
+st.markdown(f"**スコア:** ホーム {S.scores['home']} - ビジター {S.scores['visitor']}")
