@@ -195,9 +195,13 @@ def render_button_grid(title: str, coat: str, key_prefix: str):
         if cols[6].button(lbl, key=f"{key_prefix}-{r}-5"):
             add_point(coat, r, 5)
 
-        # 横線（上辺=行1-2の間、下辺=行4の下）
-        if r == 1 or r == 4:
-            st.markdown('<div class="grid-hline"></div>', unsafe_allow_html=True)
+       # ホームとビジターで横線の位置を変える
+        if coat == "ホーム":
+            if r == 1 or r == 4:  # 行1と行4
+                st.markdown('<div class="grid-hline"></div>', unsafe_allow_html=True)
+        else:  # ビジター
+            if r == 1 or r == 3:  # 行1と行3
+                st.markdown('<div class="grid-hline"></div>', unsafe_allow_html=True)
 
 # ---------- Layout ----------
 col1, col2, col3 = st.columns([1,1,1], gap="large")
