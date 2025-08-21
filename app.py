@@ -246,4 +246,12 @@ with col2:
     stats = render_stats(S.rallies)
     st.image(stats.resize((int(BASE_W*0.9), int(BASE_H*0.9))), use_column_width=False)
 
-st.markdown(f"**スコア:** ホーム {S.scores['home']} - ビジター {S.scores['visitor']}")
+# ---------- Score ----------
+st.markdown(
+    f"""
+    <div style="text-align:center; font-size:28px; font-weight:bold; margin-top:10px;">
+        スコア：ホーム {S.scores['home']} - ビジター {S.scores['visitor']}
+    </div>
+    """,
+    unsafe_allow_html=True
+)
