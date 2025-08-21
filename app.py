@@ -200,7 +200,7 @@ def render_button_grid(title: str, coat: str, key_prefix: str):
             if r == 1 or r == 4:  # 行1と行4
                 st.markdown('<div class="grid-hline"></div>', unsafe_allow_html=True)
         else:  # ビジター
-            if r == 1 or r == 3:  # 行1と行3
+            if r == 0 or r == 3:  # 行1と行3
                 st.markdown('<div class="grid-hline"></div>', unsafe_allow_html=True)
 
 # ---------- Layout ----------
