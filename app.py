@@ -1,17 +1,14 @@
-import io
-from collections import Counter
 import math
-
+from collections import Counter
 from PIL import Image, ImageDraw, ImageFont
 import streamlit as st
 
-# ===== Page config（失敗時も続行） =====
+# ========== Page config & compact UI ==========
 try:
     st.set_page_config(page_title="Badminton Rally Tracker", page_icon="🏸", layout="wide")
 except Exception:
     pass
 
-# ===== 余白圧縮 & 小型ボタン =====
 st.markdown("""
 <style>
 .block-container{padding-top:0.35rem;padding-bottom:0.35rem;max-width:1500px}
@@ -24,160 +21,171 @@ h3, h4 { margin-top:0.4rem; margin-bottom:0.4rem; }
 
 st.title("🏸 Badminton Rally Tracker — Web版")
 
-# ===== 定数（ベース座標・色） =====
-GRID_ROWS = 5
+# ========== Constants (4x5) ==========
+GRID_ROWS = 4
 GRID_COLS = 5
-BASE_W = 390
-BASE_H = 740
-MID_Y  = BASE_H // 2
+
+# 描画ベースサイズ（画像はこの解像度で作ってから縮小表示）
+BASE_W = 440       # 400*1.1 に近い幅
+BASE_H = 748       # 680*1.1 に近い高さ
+MID_Y  = int(BASE_H * (329/ (680*1.1)))  # 元コード相当のセンターライン位置
 
 HOME_STR = "ホーム"
 VIS_STR  = "ビジター"
 
-GREEN        = (0,128,0)
-GREEN_HOME   = (34,139,34)   # 背景（ホーム半面）
-GREEN_VIS    = (30,110,30)   # 背景（ビジター半面）
-WHITE        = (255,255,255)
-RED          = (220,20,60)
-BLUE         = (30,144,255)
-YELLOW       = (255,215,0)
+GREEN      = (0,128,0)
+GREEN_H    = (34,139,34)   # 右のホーム面背景
+GREEN_V    = (30,110,30)   # 右のビジター面背景
+WHITE      = (255,255,255)
+RED        = (220,20,60)
+BLUE       = (30,144,255)
+YELLOW     = (255,215,0)
 
 try:
     FONT = ImageFont.truetype("DejaVuSans.ttf", 14)
 except Exception:
     FONT = ImageFont.load_default()
 
-# ===== セッション =====
+# out 判定（元ロジック）
+HOME_OUTS = {(1,1),(1,2),(1,3),(1,4),(1,5),(2,1),(3,1),(4,1),(2,5),(3,5),(4,5)}
+VIS_OUTS  = {(1,1),(1,5),(2,1),(2,5),(3,1),(3,5),(4,1),(4,2),(4,3),(4,4),(4,5)}
+
+def is_out(coat:str, r:int, c:int)->bool:
+    return (r,c) in (HOME_OUTS if coat==HOME_STR else VIS_OUTS)
+
+# ========== Session ==========
 S = st.session_state
-if "rallies" not in S: S.rallies = []      # 各ラリー: [(x,y),...]
-if "current" not in S: S.current = []      # 入力中ラリー
-if "scores"  not in S: S.scores  = {"home":0, "visitor":0}
+if "rallies" not in S:  S.rallies = []     # 各ラリー: [(x,y),...]
+if "current" not in S:  S.current = []     # 入力中ラリー
+if "scores"  not in S:  S.scores = {"home":0, "visitor":0}
+if "home"    not in S:  S.home = HOME_STR
+if "visitor" not in S:  S.visitor = VIS_STR
 
-# ===== ユーティリティ =====
-def cell_size():
-    cell_w = BASE_W / GRID_COLS
-    cell_h = (BASE_H/2) / GRID_ROWS
-    return cell_w, cell_h
+# ========== Geometry helpers ==========
+def cell_size_half():
+    cw = BASE_W / GRID_COLS
+    ch = (BASE_H/2) / GRID_ROWS
+    return cw, ch
 
-def cell_center(col: int, row: int, top_half: bool) -> tuple[int,int]:
-    cw, ch = cell_size()
-    x = int((col-0.5) * cw)
-    y = int((row-0.5) * ch) if top_half else int(MID_Y + (row-0.5) * ch)
+def cell_center(col:int, row:int, top_half:bool)->tuple[int,int]:
+    cw, ch = cell_size_half()
+    x = int((col-0.5)*cw)
+    y = int((row-0.5)*ch) if top_half else int(MID_Y + (row-0.5)*ch)
     return x, y
 
-def nearest_cell(x: int, y: int) -> tuple[str,int,int]:
-    top_half = y < MID_Y
-    coat = HOME_STR if top_half else VIS_STR
-    cw, ch = cell_size()
+def nearest_cell(x:int, y:int):
+    top = y < MID_Y
+    cw, ch = cell_size_half()
     c = max(1, min(GRID_COLS, int(x // cw + 1)))
-    r = max(1, min(GRID_ROWS, int((y if top_half else (y - MID_Y)) // ch + 1)))
-    return coat, r, c
+    r = max(1, min(GRID_ROWS, int((y if top else (y - MID_Y)) // ch + 1)))
+    return (HOME_STR if top else VIS_STR), r, c
 
-# ===== コート描画（Pillow） =====
-def draw_half_court_grid(img: Image.Image, top_half: bool, face_color, with_inner_rect=True):
-    """半面に外枠＋5×5グリッド線を引く（ボタン面背景用）。"""
+# ========== Drawing ==========
+def draw_full_court(img:Image.Image):
+    """左/中央用：上下半面＋センター線＋内枠（元アプリ風）"""
     d = ImageDraw.Draw(img)
-    # 塗りつぶし
-    if top_half:
-        d.rectangle((0,0,BASE_W-1, MID_Y-1), fill=face_color, outline=face_color)
-    else:
-        d.rectangle((0,MID_Y,BASE_W-1,BASE_H-1), fill=face_color, outline=face_color)
-
-    # 外枠
-    y0, y1 = (0, MID_Y-1) if top_half else (MID_Y, BASE_H-1)
-    d.rectangle((0, y0, BASE_W-1, y1), outline=WHITE, width=2)
-
-    # 5×5 グリッド
-    cw, ch = cell_size()
-    # 縦線（列の境目 1..4）
-    for k in range(1, GRID_COLS):
-        x = int(k * cw)
-        d.line((x, y0, x, y1), fill=WHITE, width=1)
-    # 横線（行の境目 1..4）
-    for k in range(1, GRID_ROWS):
-        y = int(y0 + k * ch)
-        d.line((0, y, BASE_W, y), fill=WHITE, width=1)
-
-    # 任意：内側サービス矩形（視認性のため軽く）
-    if with_inner_rect:
-        margin_x = int(BASE_W*0.12)
-        margin_y = int((BASE_H/2)*0.12)
-        d.rectangle((margin_x, y0+margin_y, BASE_W-margin_x, y1-margin_y), outline=WHITE, width=2)
-
-def render_traj(paths=None, show_steps=True) -> Image.Image:
-    img = Image.new("RGB", (BASE_W, BASE_H), GREEN)
-    d = ImageDraw.Draw(img)
-    # 背景：上下半面を塗って線を描く
-    draw_half_court_grid(img, True,  GREEN)
-    draw_half_court_grid(img, False, GREEN)
-    # センターライン
+    # 塗り
+    d.rectangle((0,0,BASE_W-1,BASE_H-1), fill=GREEN, outline=GREEN)
+    # センター
     d.line((0, MID_Y, BASE_W, MID_Y), fill=WHITE, width=2)
+    # インナー長方形（元コード相当）
+    x1 = int((11 + 1 * 76) * 1.1)
+    y1 = int((11 + 1 * 76) * 1.1)
+    x2 = int((11 + 4 * 76) * 1.1)
+    y2 = int((346 + 3 * 76) * 1.1)
+    d.rectangle((x1, y1, x2, y2), outline=WHITE, width=2)
 
+def draw_grid_lines(img:Image.Image, top_half:bool, include_inner=False, face=None):
+    """右のボタン背景や左/中央の補助線用：半面に 4x5 グリッド線を引く"""
+    d = ImageDraw.Draw(img)
+    if face is not None:
+        if top_half:
+            d.rectangle((0,0,BASE_W-1,MID_Y-1), fill=face, outline=face)
+        else:
+            d.rectangle((0,MID_Y,BASE_W-1,BASE_H-1), fill=face, outline=face)
+    y0,y1 = (0, MID_Y-1) if top_half else (MID_Y, BASE_H-1)
+    # 外枠
+    d.rectangle((0,y0,BASE_W-1,y1), outline=WHITE, width=2)
+    # 格子（縦4・横3）
+    cw, ch = cell_size_half()
+    for k in range(1, GRID_COLS):
+        x = int(k*cw); d.line((x,y0,x,y1), fill=WHITE, width=1)
+    for k in range(1, GRID_ROWS):
+        y = int(y0 + k*ch); d.line((0,y,BASE_W,y), fill=WHITE, width=1)
+    # 内側サービス矩形（薄め）
+    if include_inner:
+        mx = int(BASE_W*0.12); my = int((BASE_H/2)*0.1)
+        d.rectangle((mx, y0+my, BASE_W-mx, y1-my), outline=WHITE, width=2)
+
+def render_traj(paths)->Image.Image:
+    img = Image.new("RGB", (BASE_W, BASE_H))
+    draw_full_court(img)
+    d = ImageDraw.Draw(img)
     if paths:
-        for i, (x,y) in enumerate(paths):
+        for i,(x,y) in enumerate(paths):
             d.ellipse((x-5,y-5,x+5,y+5), fill=YELLOW)
             if i>0:
                 x0,y0 = paths[i-1]
-                prev_top = (y0 < MID_Y)
-                now_top  = (y  < MID_Y)
+                prev_top, now_top = (y0<MID_Y), (y<MID_Y)
                 color = BLUE if now_top else RED
-                if prev_top != now_top:
-                    color = RED if now_top else BLUE
+                if prev_top != now_top: color = RED if now_top else BLUE
                 d.line((x0,y0,x,y), fill=color, width=2)
-                ang = math.atan2(y-y0, x-x0)
-                L = 8
-                p1 = (x + L*math.cos(ang+2.6), y + L*math.sin(ang+2.6))
-                p2 = (x + L*math.cos(ang-2.6), y + L*math.sin(ang-2.6))
+                ang = math.atan2(y-y0, x-x0); L=8
+                p1=(x+L*math.cos(ang+2.6), y+L*math.sin(ang+2.6))
+                p2=(x+L*math.cos(ang-2.6), y+L*math.sin(ang-2.6))
                 d.polygon([p1,(x,y),p2], fill=color)
-                if show_steps:
-                    mx,my = (x0+x)/2, (y0+y)/2
-                    d.text((mx, my-10 if now_top else my+10), str(i+1), fill=WHITE, font=FONT, anchor="mm")
+                mx,my=(x0+x)/2,(y0+y)/2
+                d.text((mx, my-10 if now_top else my+10), str(i+1), fill=WHITE, font=FONT, anchor="mm")
     return img
 
-def render_stats_from_rallies(rallies) -> Image.Image:
+def render_stats(rallies)->Image.Image:
+    img = Image.new("RGB", (BASE_W, BASE_H))
+    draw_full_court(img)
+    # ％表示は最終着弾セルで集計
     counter = Counter()
-    total_home = total_vis = 0
+    thome = tvis = 0
     for rally in rallies:
         if not rally: continue
         x,y = rally[-1]
-        coat, r, c = nearest_cell(x,y)
+        coat,r,c = nearest_cell(x,y)
         counter[(coat,r,c)] += 1
-        if coat == HOME_STR: total_home += 1
-        else: total_vis += 1
-
-    img = Image.new("RGB", (BASE_W, BASE_H), GREEN)
-    draw_half_court_grid(img, True,  GREEN)   # 上半面
-    draw_half_court_grid(img, False, GREEN)   # 下半面
+        if coat==HOME_STR: thome += 1
+        else: tvis += 1
     d = ImageDraw.Draw(img)
-    # ％をセル中心に描画
     for r in range(1, GRID_ROWS+1):
         for c in range(1, GRID_COLS+1):
-            cnt = counter.get((HOME_STR, r, c), 0)
-            pct = (cnt/total_home*100) if total_home else 0
-            x,y = cell_center(c, r, top_half=True)
-            d.text((x,y), f"{pct:.1f}%", fill=RED, font=FONT, anchor="mm")
-            cnt = counter.get((VIS_STR, r, c), 0)
-            pct = (cnt/total_vis*100) if total_vis else 0
-            x,y = cell_center(c, r, top_half=False)
-            d.text((x,y), f"{pct:.1f}%", fill=BLUE, font=FONT, anchor="mm")
+            # ホーム面
+            cnt = counter.get((HOME_STR,r,c),0)
+            pct = (cnt/thome*100) if thome else 0
+            x,y = cell_center(c,r,True)
+            d.text((x,y), f"{pct:.1f}%", fill=RED if S.home==HOME_STR else BLUE, font=FONT, anchor="mm")
+            # ビジター面
+            cnt = counter.get((VIS_STR,r,c),0)
+            pct = (cnt/tvis*100) if tvis else 0
+            x,y = cell_center(c,r,False)
+            d.text((x,y), f"{pct:.1f}%", fill=BLUE if S.visitor==VIS_STR else RED, font=FONT, anchor="mm")
+    # 格子を重ねて視認性を上げる
+    draw_grid_lines(img, True)
+    draw_grid_lines(img, False)
     return img
 
-def render_half_background(face_color) -> Image.Image:
-    """ボタン面の背景（半面のみ、5×5グリッド付き）"""
-    img = Image.new("RGB", (BASE_W, BASE_H), face_color)
-    draw_half_court_grid(img, True, face_color)   # 上半面のみ使う
+def half_background(face)->Image.Image:
+    """右カラム：ホーム/ビジターのボタン背景。半面＋白い格子を描く。"""
+    img = Image.new("RGB", (BASE_W, BASE_H))
+    # 上半面のみ使う
+    draw_grid_lines(img, True, include_inner=True, face=face)
     return img.crop((0,0,BASE_W,MID_Y))
 
-# ===== 状態更新 =====
-def add_point_by_cell(is_home: bool, row: int, col: int):
-    x,y = cell_center(col, row, top_half=is_home)
+# ========== Actions ==========
+def add_point(coat:str, r:int, c:int):
+    x,y = cell_center(c,r, coat==HOME_STR)
     S.current.append((x,y))
 
 def end_rally():
     if S.current:
         S.rallies.append(S.current[:])
         S.current = []
-        S.scores["home"] += 1  # 必要に応じてスコアロジック差し替え
+        S.scores["home"] += 1  # 必要に応じてスコアロジック置換
 
 def undo_one():
     if S.current: S.current.pop()
@@ -187,58 +195,58 @@ def undo_last_rally():
         S.current = S.rallies.pop()
 
 def reset_all():
-    S.current = []
-    S.rallies = []
-    S.scores = {"home":0, "visitor":0}
+    S.current = []; S.rallies = []; S.scores = {"home":0, "visitor":0}
 
-# ===== レイアウト：3カラム（右の入力→左/中央描画） =====
+# ========== Layout ==========
 col1, col2, col3 = st.columns([1,1,1], gap="small")
 
+# 右：ボタン（背景に白い格子線）
 with col3:
     st.subheader("ボタン", divider="gray")
 
-    # --- ホーム面：背景に半面コート（5×5白グリッド） ---
-    bg_home = render_half_background(GREEN_HOME).resize((int(BASE_W*0.9), int(MID_Y*0.9)))
-    st.image(bg_home, use_column_width=False)
+    # --- ホーム ---
     st.markdown("**ホーム**")
+    bg_home = half_background(GREEN_H).resize((int(BASE_W*0.9), int(MID_Y*0.9)))
+    st.image(bg_home, use_column_width=False)
     for r in range(1, GRID_ROWS+1):
         cols = st.columns(GRID_COLS, gap="small")
         for c in range(1, GRID_COLS+1):
-            # 画像のような「oH1,1」表記（境界セルを 'o' プレフィックス）に近づける例
-            is_outer = (r in {1,GRID_ROWS}) or (c in {1,GRID_COLS})
-            lbl = f"{'o' if is_outer else ''}H{r},{c}"
+            prefix = "o" if is_out(HOME_STR, r, c) else ""
+            lbl = f"{prefix}H{r},{c}"
             if cols[c-1].button(lbl, key=f"H-{r}-{c}"):
-                add_point_by_cell(True, r, c)
+                add_point(HOME_STR, r, c)
 
-    # --- ビジター面 ---
-    bg_vis = render_half_background(GREEN_VIS).resize((int(BASE_W*0.9), int(MID_Y*0.9)))
-    st.image(bg_vis, use_column_width=False)
+    # --- ビジター ---
     st.markdown("**ビジター**")
+    bg_vis = half_background(GREEN_V).resize((int(BASE_W*0.9), int(MID_Y*0.9)))
+    st.image(bg_vis, use_column_width=False)
     for r in range(1, GRID_ROWS+1):
         cols = st.columns(GRID_COLS, gap="small")
         for c in range(1, GRID_COLS+1):
-            is_outer = (r in {1,GRID_ROWS}) or (c in {1,GRID_COLS})
-            lbl = f"{'o' if is_outer else ''}V{r},{c}"
+            prefix = "o" if is_out(VIS_STR, r, c) else ""
+            lbl = f"{prefix}V{r},{c}"
             if cols[c-1].button(lbl, key=f"V-{r}-{c}"):
-                add_point_by_cell(False, r, c)
+                add_point(VIS_STR, r, c)
 
     st.divider()
-    c1, c2 = st.columns(2, gap="small")
+    c1,c2 = st.columns(2, gap="small")
     if c1.button("ラリー終了", use_container_width=True):  end_rally()
     if c2.button("元に戻す", use_container_width=True):    undo_one()
-
-    c3, c4 = st.columns(2, gap="small")
+    c3,c4 = st.columns(2, gap="small")
     if c3.button("一つ前のラリー", use_container_width=True): undo_last_rally()
     if c4.button("ラリー全消去", use_container_width=True):    reset_all()
 
+# 左：軌跡（元の見た目＋4×5）
 with col1:
     st.subheader("軌跡", divider="gray")
-    traj_img = render_traj(S.current, show_steps=True)
-    st.image(traj_img.resize((int(BASE_W*0.9), int(BASE_H*0.9))), use_column_width=False)
+    traj = render_traj(S.current)
+    st.image(traj.resize((int(BASE_W*0.9), int(BASE_H*0.9))), use_column_width=False)
 
+# 中央：統計（最終着弾を%表示＋4×5格子）
 with col2:
     st.subheader("統計", divider="gray")
-    stats_img = render_stats_from_rallies(S.rallies)
-    st.image(stats_img.resize((int(BASE_W*0.9), int(BASE_H*0.9))), use_column_width=False)
+    stats = render_stats(S.rallies)
+    st.image(stats.resize((int(BASE_W*0.9), int(BASE_H*0.9))), use_column_width=False)
 
+# スコア
 st.markdown(f"**スコア:** ホーム {S.scores['home']} - ビジター {S.scores['visitor']}")
