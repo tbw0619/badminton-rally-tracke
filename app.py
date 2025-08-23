@@ -255,3 +255,9 @@ st.markdown(
     """,
     unsafe_allow_html=True
 )
+
+st.set_page_config(
+    page_title="Badminton Rally Tracker",  # noteに出るタイトル
+    page_icon="🏸",
+    layout="wide"
+)
