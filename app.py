@@ -1,8 +1,19 @@
-# app.py — Streamlit + Pillow（matplotlib不要）
 import math
 from collections import Counter
 from PIL import Image, ImageDraw, ImageFont
 import streamlit as st
+
+# ---------- Page config & compact UI ----------
+st.set_page_config(page_title="Badminton Rally Tracker", page_icon="🏸", layout="wide")
+
+# OGP（noteやSNSのプレビュー向け。無害なのでここでOK）
+st.markdown("""
+<meta property="og:title" content="Badminton Rally Tracker" />
+<meta property="og:description" content="ラリーを記録・可視化するStreamlitアプリ" />
+<meta property="og:type" content="website" />
+<meta property="og:url" content="https://bappton-rally-tracke-xzakvpyx4du9loxvgcg4zc.streamlit.app/" />
+<meta property="og:image" content="https://your-image-url.png" />
+""", unsafe_allow_html=True)
 
 # ---------- Page config & compact UI ----------
 try:
@@ -255,20 +266,3 @@ st.markdown(
     """,
     unsafe_allow_html=True
 )
-
-
-# ページ設定（noteに出るタイトルはここでも反映される）
-st.set_page_config(
-    page_title="Badminton Rally Tracker",  # ←希望のタイトルに変更
-    page_icon="🏸",
-    layout="wide"
-)
-
-# OGPタグを明示的に追加（noteやSNSでシェア時に有効）
-st.markdown("""
-<meta property="og:title" content="Badminton Rally Tracker" />
-<meta property="og:description" content="ラリーを記録・可視化するStreamlitアプリ" />
-<meta property="og:type" content="website" />
-<meta property="og:url" content="https://bappton-rally-tracke-xzakvpyx4du9loxvgcg4zc.streamlit.app/" />
-<meta property="og:image" content="https://your-image-url.png" />
-""", unsafe_allow_html=True)
