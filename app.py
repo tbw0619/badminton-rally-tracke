@@ -256,8 +256,19 @@ st.markdown(
     unsafe_allow_html=True
 )
 
+
+# ページ設定（noteに出るタイトルはここでも反映される）
 st.set_page_config(
-    page_title="Badminton Rally Tracker",  # noteに出るタイトル
+    page_title="Badminton Rally Tracker",  # ←希望のタイトルに変更
     page_icon="🏸",
     layout="wide"
 )
+
+# OGPタグを明示的に追加（noteやSNSでシェア時に有効）
+st.markdown("""
+<meta property="og:title" content="Badminton Rally Tracker" />
+<meta property="og:description" content="ラリーを記録・可視化するStreamlitアプリ" />
+<meta property="og:type" content="website" />
+<meta property="og:url" content="https://bappton-rally-tracke-xzakvpyx4du9loxvgcg4zc.streamlit.app/" />
+<meta property="og:image" content="https://your-image-url.png" />
+""", unsafe_allow_html=True)
